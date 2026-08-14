@@ -1,0 +1,15 @@
+[Unit]
+Description=CFA635 LCD page server
+After=network-online.target dev-cfa635.device
+BindsTo=dev-cfa635.device
+
+[Service]
+User=liam
+Group=plugdev
+Environment=CFA635_PORT=/dev/cfa635
+ExecStart=/home/liam/dev/cfa635/.venv/bin/cfa635-server
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
