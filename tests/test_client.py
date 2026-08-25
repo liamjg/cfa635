@@ -19,8 +19,9 @@ def make(live_server, name="tester", **kw) -> Cfa635Client:
 def test_publishes_a_page(live_server, token_dir):
     client = make(live_server)
     client.put_page("hello", ["Hello", "world"])
-    assert live_server.wait_for(lambda: live_server.contains("Hello"))
-    assert live_server.contains("world")
+    # the renderer writes a row at a time, so row 0 can land before row 1
+    assert live_server.wait_for(lambda: live_server.contains("Hello")
+                                and live_server.contains("world"))
 
 
 def test_reads_need_no_registration(live_server, token_dir):
