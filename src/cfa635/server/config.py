@@ -47,8 +47,10 @@ class Config:
     clock: bool = field(default_factory=lambda: _env_flag("CFA635_CLOCK", True))
     info: bool = field(default_factory=lambda: _env_flag("CFA635_INFO", True))
     clock_seconds: bool = field(default_factory=lambda: _env_flag("CFA635_CLOCK_SECONDS", True))
-    # strftime, rendered through markup: {big:} takes the time 3 rows tall, and
-    # {fill} in the date line pushes whatever follows it to the right margin.
+    # strftime, rendered through markup: {big:} takes the time 3 rows tall.
+    # The default date is 15 characters — the width of {big:HH:MM} — so it
+    # sits squarely under the clock instead of spanning the whole glass.
+    # A {fill} in the format still works, e.g. "%a %d %b{fill}%Y".
     clock_time_fmt: str = field(default_factory=lambda: os.environ.get("CFA635_CLOCK_TIME_FMT", "%H:%M"))
     clock_date_fmt: str = field(default_factory=lambda: os.environ.get(
-        "CFA635_CLOCK_DATE_FMT", "%a %d %b{fill}%Y"))
+        "CFA635_CLOCK_DATE_FMT", "%a %d %b %Y"))

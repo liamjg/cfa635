@@ -54,7 +54,8 @@ def test_clock_lines_lay_out_as_designed():
     lines = builtin.clock_lines(config, datetime(2026, 8, 24, 9, 47, 23))
     assert lines[0] == "{big:09:47}"
     assert lines[1] == " " * builtin.SECONDS_COL + "23"
-    assert lines[3] == "Mon 24 Aug{fill}2026"
+    # 15 characters: exactly the width of {big:HH:MM} above it
+    assert lines[3] == "Mon 24 Aug 2026"
 
 
 # --- the info page -----------------------------------------------------------

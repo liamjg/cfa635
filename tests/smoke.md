@@ -33,12 +33,11 @@ curl -s -X PUT :8635/pages/hello -H "$A" -H 'content-type: application/json' \
 #    [HW] digits must not be mirrored — "2" opens to the left, not the right.
 #         If they are, the CGRAM row bit-order assumption is wrong (MSB =
 #         leftmost): fix markup.py's bitmaps and sim.py together.
-#    [HW] the vertical strokes must run unbroken through all three rows and
-#         the bars unbroken across all three cells — this is the gapless-cell
-#         claim (datasheet p.13) doing the real work.
-#    [HW] 2 px strokes legible from across the room on FSTN positive glass?
-#         markup.STROKE is a single constant if they want to be 3 px.
-#    [HW] the colon sits centred between the digits, not high or low.
+#    [HW] blocks must butt together with no seam, horizontally *and*
+#         vertically — this is the gapless-cell claim (datasheet p.13) doing
+#         the real work. A visible grid means the claim is wrong.
+#    [HW] a clear band of unlit pixels under the digits, above the date.
+#    [HW] the colon's two dots sit level with the digits' middle, not high.
 #    press DOWN to reach Info: address readable, uptime sane.
 
 # 6. a second page starts 10 s rotation; watch page_visible events

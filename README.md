@@ -79,8 +79,8 @@ equals rotate (10 s default, per-page `duration` override), `priority >=
 100` is an alert that preempts everything, and pages with a `ttl` vanish
 when their owner stops refreshing them.
 
-At rest the display shows its own **big-font clock** — seven-segment digits
-three rows tall, with the date across the footer — and a second built-in
+At rest the display shows its own **big-font clock** — block digits three
+rows tall, with the date beneath — and a second built-in
 **Info** page (address, uptime, firmware) sits behind it in the switcher.
 Both are ordinary pages below client priority, so anything you publish
 takes the glass and the clock returns when it goes; both are still "idle"
@@ -91,7 +91,7 @@ built-in shell** (page switcher + backlight/contrast settings, persisted in
 the module's user flash), and **ENTER focuses** an `interactive` page — all
 six keys then route to that page's owner over WebSocket, which is how
 clients build menus, dimmers, and dialogs. Page lines support server-side
-**markup**: gapless bars, sparklines, multi-row charts, big seven-segment
+**markup**: gapless bars, sparklines, multi-row charts, big block
 digits, spinners, icons, `{fill}` layout, marquee and blink — see
 [docs/API.md](docs/API.md).
 

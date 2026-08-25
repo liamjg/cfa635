@@ -111,7 +111,7 @@ display's cells are contiguous in both axes, so meters are gapless.
 | `{vbar:0.6}` | one-cell vertical fill, 8 levels | ≤7 (shared family) |
 | `{spark:0.2,0.7,…}` | one vbar cell per sample | ≤7 (shared family) |
 | `{chart:…:rows=2}` | multi-row fill chart, 8·N levels — the widget owns the cells it covers on the rows below | ≤7 (shared family) |
-| `{big:09:47}` | seven-segment characters 3 rows tall, 3 cells per digit — the widget owns the cells it covers on the two rows below | 8 (the whole font) |
+| `{big:09:47}` | block digits 3 rows tall, 3 cells per digit — the widget owns the cells it covers on the two rows below | 3 (+1 for `:`) |
 | `{spin}` | one-cell spinner, bitmap-animated ~4 Hz | 1 |
 | `{hr}` | solid rule filling the remaining width | 1 |
 | `{fill}` `{fill:.}` | expands to consume leftover space: `CPU{fill}42%` right-justifies, `{fill}T{fill}` centers, `{fill:.}` dot leaders | 0 |
@@ -136,20 +136,25 @@ display's cells are contiguous in both axes, so meters are gapless.
 hardware inverse-video blinking block: the zero-slot highlight for PIN
 entry and field editing.
 
-**Big characters**: `{big:...}` draws digits 18 x 24 px, as three rows of
-three cells. One blank column separates adjacent digits (their 2 px
-verticals would otherwise merge); `:` and any character with no big form
-take a single column and render normally on the *middle* row, i.e.
-vertically centred against the digits — which is what makes the colon in
-`{big:09:47}` land dead centre for free, and what lets `{big:9 AM}` work.
-`{big:HH:MM}` is 15 columns wide.
+**Big characters**: `{big:...}` draws block digits 18 x 20 px, laid out as a
+3-wide x 5-tall grid of 6 x 4 px blocks. A display cell is 6 x 8, exactly two
+block rows, so five block rows is two and a half cells: the digit ends halfway
+down its third row, and that leftover half-cell is deliberate — it is the air
+that keeps the numerals off whatever sits on the row beneath.
 
-The font is 3 rows tall rather than 2 because that is what fits: the ten
-digits then share exactly 8 bitmaps (four bars/verticals and their four
-corners), so no value can exhaust CGRAM mid-frame. A 2-row font needs 9-11.
-The flip side is that the budget is fully spent — nothing else on the frame
-gets a slot, and `{big:}` itself degrades to the plain string on its top
-row if something else claimed the slots first.
+Folding block pairs into cells takes only three bitmaps (a full cell and its
+two halves), so the whole font costs 3 slots, 4 when a `1` is on screen. The
+colon spends one more on a square dot, placed in the first two rows so the
+pair straddles the digits' optical centre — a CGROM `:` cannot reach it.
+Everything else on the frame still has slots to spare.
+
+One blank column separates adjacent *digits*, whose full-width blocks would
+otherwise merge; `:` and any character with no big form take a single column,
+and characters render normally on the middle row, vertically centred against
+the digits, so `{big:9 AM}` works. `{big:HH:MM}` is 15 columns wide.
+
+If something else claimed the slots first, each digit degrades to its literal
+character on the top row rather than to noise.
 
 *Planned (v1.1, not yet implemented)*: `{inv:text}` inverted spans (short
 designed spans only — one slot per distinct character), sliders/scrollbars,

@@ -96,82 +96,43 @@ _RAMP = " ..::-=##"  # vertical-fill fallback by filled rows (0..8)
 
 # --- big font ----------------------------------------------------------------
 #
-# Seven-segment characters 3 rows tall and 3 cells wide (18 x 24 px, since
-# cells are contiguous in both directions). The whole alphabet closes at
-# exactly MAX_GLYPHS bitmaps, which is the reason for the 3-row geometry: a
-# 2-row font needs 9-11 (the corner joins multiply) and cannot fit.
+# Block digits on a 3-wide x 5-tall grid of 6 x 4 px blocks: 18 px wide, 20 px
+# tall. A display cell is 6 x 8, exactly two block rows, so five block rows is
+# two and a half cells — the digit ends halfway down its third row, and that
+# leftover half-cell is what keeps the numerals off the date line beneath them.
 #
-# The trick is that the middle bar sits at the *top* of the middle row, so a
-# vertical stroke that stops at the bar contributes nothing of its own — the
-# bar already fills those pixel rows. Four bars/verticals plus their four
-# corners is the entire set.
+# Folding block pairs into cells needs only three bitmaps (a full cell and its
+# two halves), which leaves most of the 8-slot budget free — the colon spends
+# one more on a square dot, placed in the first two rows so the pair straddles
+# the digits' optical centre.
 
-STROKE = 2  # px; the strokes' thickness in a 6 x 8 cell
-
-
-def _vert(left: bool) -> tuple[int, ...]:
-    return _colfill(STROKE) if left else tuple([(1 << STROKE) - 1] * 8)
-
-
-def _band(top: bool) -> tuple[int, ...]:
-    if top:
-        return tuple([0x3F] * STROKE + [0] * (8 - STROKE))
-    return _rowfill(STROKE)
-
-
-def _merge(a: tuple[int, ...], b: tuple[int, ...]) -> tuple[int, ...]:
-    return tuple(x | y for x, y in zip(a, b))
-
-
-_VL, _VR = _vert(True), _vert(False)
-_HT, _HB = _band(True), _band(False)
+BLOCK_FULL = tuple([0x3F] * 8)
+BLOCK_TOP = tuple([0x3F] * 4 + [0] * 4)
+BLOCK_BOTTOM = tuple([0] * 4 + [0x3F] * 4)
+COLON_DOT = tuple([0] * 4 + [0x1E] * 4)   # 4 px square, inset one column
 
 # key -> bitmap. The keys draw the font legibly in source (see BIG_FONT).
 BIG_CELLS: dict[str, tuple[int, ...] | None] = {
-    " ": None,                  # blank
-    "|": _VL,                   # left vertical
-    "!": _VR,                   # right vertical
-    "-": _HT,                   # top bar, or the middle bar one row down
-    "_": _HB,                   # bottom bar
-    "[": _merge(_VL, _HT),      # left vertical + bar above it
-    "]": _merge(_VR, _HT),      # right vertical + bar above it
-    "L": _merge(_VL, _HB),      # left vertical + bar below it
-    "J": _merge(_VR, _HB),      # right vertical + bar below it
+    " ": None,          # blank
+    "#": BLOCK_FULL,    # both block rows
+    "-": BLOCK_TOP,     # upper block row only
+    "_": BLOCK_BOTTOM,  # lower block row only
 }
 
-# Each entry is three rows of three cells. "1" keeps the stem right-aligned,
-# the way a real seven-segment display shows it.
+# Three rows of three cells each. Derived from the 3x5 block grid above, so
+# every glyph's last row is upper-half-only or empty: nothing reaches the
+# bottom 4 px.
 BIG_FONT: dict[str, tuple[str, str, str]] = {
-    "0": ("[-]",
-          "| !",
-          "L_J"),
-    "1": ("  !",
-          "  !",
-          "  !"),
-    "2": ("--]",
-          "[--",
-          "L__"),
-    "3": ("--]",
-          "--]",
-          "__J"),
-    "4": ("| !",
-          "--]",
-          "  !"),
-    "5": ("[--",
-          "--]",
-          "__J"),
-    "6": ("[--",
-          "[-]",
-          "L_J"),
-    "7": ("--]",
-          "  !",
-          "  !"),
-    "8": ("[-]",
-          "[-]",
-          "L_J"),
-    "9": ("[-]",
-          "--]",
-          "__J"),
+    "0": ("#-#", "# #", "---"),
+    "1": ("_# ", " # ", "---"),
+    "2": ("--#", "#--", "---"),
+    "3": ("--#", "--#", "---"),
+    "4": ("# #", "--#", "  -"),
+    "5": ("#--", "--#", "---"),
+    "6": ("#--", "#-#", "---"),
+    "7": ("--#", "  #", "  -"),
+    "8": ("#-#", "#-#", "---"),
+    "9": ("#-#", "--#", "---"),
 }
 
 BIG_ROWS = 3
@@ -343,16 +304,26 @@ def _big(arg: str, cells: list[Cell], spans: list[tuple]) -> bool:
     if not arg:
         return False
     rows: list[list[Cell]] = [[] for _ in range(BIG_ROWS)]
+    previous_was_glyph = False
     for ch in arg:
         art = BIG_FONT.get(ch)
         if art is None:
-            for row, cell in zip(rows, (BLANK, _ch(ch) if ch != " " else BLANK,
-                                        BLANK)):
+            previous_was_glyph = False
+            column: tuple[Cell, ...]
+            if ch == ":":
+                # square dots in the first two rows: their midpoint is the
+                # digits' optical centre, which a CGROM colon cannot reach
+                dot = Cell(glyph=COLON_DOT, fallback=0x20)
+                column = (dot, Cell(glyph=COLON_DOT, fallback=ord(":")), BLANK)
+            else:
+                column = (BLANK, _ch(ch) if ch != " " else BLANK, BLANK)
+            for row, cell in zip(rows, column):
                 row.append(cell)
             continue
-        if rows[0] and rows[0][-1] != BLANK:
-            for row in rows:  # 2 px + 2 px of adjacent verticals would merge
+        if previous_was_glyph:
+            for row in rows:  # neighbouring blocks would otherwise merge
                 row.append(BLANK)
+        previous_was_glyph = True
         # one cell of the top row carries the literal character as its
         # fallback, so an over-budget frame degrades to small text rather than
         # to noise. It has to be a cell that actually has a glyph: "1" and "4"

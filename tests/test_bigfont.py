@@ -7,6 +7,7 @@ from cfa635.markup import MAX_GLYPHS, BIG_FONT, parse_frame, parse_line
 # back into the source art so a wrong segment shows up as a diff, not as hex.
 _ART = {bitmap: key for key, bitmap in markup.BIG_CELLS.items()
         if bitmap is not None}
+_ART[markup.COLON_DOT] = ":"
 
 
 def art(frame, col=0, width=3, rows=3):
@@ -40,10 +41,10 @@ def test_every_digit_renders_its_own_shape():
 
 
 def test_whole_alphabet_fits_the_glyph_budget():
-    # the point of the 3-row geometry: all ten digits share exactly 8 bitmaps,
-    # so no time of day can ever exhaust CGRAM and degrade mid-frame
+    # folding block pairs into cells costs three bitmaps for the whole font,
+    # so no time of day can exhaust CGRAM and degrade mid-frame
     every = bitmaps(parse_frame(["{big:" + "".join(BIG_FONT) + "}"], 0.0))
-    assert len(every) == MAX_GLYPHS
+    assert len(every) == 3
 
     for hour in range(24):
         for minute in (0, 7, 23, 38, 47, 59):
@@ -55,20 +56,24 @@ def test_clock_geometry_and_free_colon():
     frame = parse_frame(["{big:09:47}", "", "", ""], 0.0)
     # 4 digits at 3 cells + 2 separators + 1 colon column
     assert art(frame, width=20) == (
-        "[-] [-] | ! --]     ",
-        "| ! --]:--]   !     ",
-        "L_J __J   !   !     ",
+        "#-# #-#:# # --#     ",
+        "# # --#:--#   #     ",
+        "--- ---   -   -     ",
     )
-    # the colon is a CGROM character on the middle row: no slot spent, and it
-    # lands dead centre of the 24 px character height
-    assert frame[1][7].glyph is None
-    assert frame[1][7].char == ord(":")
-    assert frame[0][7].char == ord(" ")
+    # the colon is a pair of square dots in the top two rows, straddling the
+    # digits' centre; the third row is clear like every other glyph's
+    assert frame[0][7].glyph == markup.COLON_DOT
+    assert frame[1][7].glyph == markup.COLON_DOT
+    assert frame[2][7] == markup.BLANK
 
 
 def test_span_leaves_the_rest_of_the_rows_alone():
     # this is what puts the small seconds beside the clock
     frame = parse_frame(["{big:09:47}", " " * 17 + "23", "", "Mon 24 Aug"], 0.0)
+    # nothing reaches the bottom 4 px of the last row: that is the gap that
+    # keeps the numerals off the date line
+    assert all(cell.glyph is None or cell.glyph[4:] == (0, 0, 0, 0)
+               for cell in frame[2])
     assert "".join(chr(c.char) for c in frame[1][15:]) == "  23 "
     assert "".join(chr(c.char) for c in frame[3][:10]) == "Mon 24 Aug"
 
@@ -76,17 +81,17 @@ def test_span_leaves_the_rest_of_the_rows_alone():
 def test_fill_shifts_the_span_with_the_cells():
     # {fill} inserts cells; the rows below have to move with them
     frame = parse_frame(["{fill}{big:8}", "", "", ""], 0.0)
-    assert art(frame, col=17) == ("[-]", "[-]", "L_J")
+    assert art(frame, col=17) == ("#-#", "#-#", "---")
 
 
 def test_over_budget_degrades_to_small_text():
-    # the digits' own alphabet fills all 8 slots, so anything sharing the frame
-    # loses. Every digit keeps one cell carrying its literal, including "1" and
-    # "4", whose top row has nothing in the middle to hang it on.
+    # if something else claimed the slots first, every digit still keeps one
+    # cell carrying its literal — including "1" and "4", whose top row has
+    # nothing in the middle to hang it on.
     cells, _ = parse_line("{big:09:47}", 0.0)
     assert "".join(chr(c.fallback) for c in cells[:15]) == " 0   9  4    7 "
     cells, _ = parse_line("{big:11:14}", 0.0)
-    assert "".join(chr(c.fallback) for c in cells[:15]) == "  1   1   1 4  "
+    assert "".join(chr(c.fallback) for c in cells[:15]) == " 1   1   1  4  "
 
 
 def test_unsupported_characters_render_small_and_centred():
