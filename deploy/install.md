@@ -39,6 +39,12 @@ Set `CFA635_*` environment variables via `sudo systemctl edit cfa635d`
 `CFA635_BACKLIGHT`, `CFA635_IDLE_BACKLIGHT`, `CFA635_IDLE_DIM_SECS`,
 `CFA635_CONTRAST`.
 
+The built-in clock and info pages are on by default:
+`CFA635_CLOCK=0` / `CFA635_INFO=0` disable them, `CFA635_CLOCK_SECONDS=0`
+drops the ticking seconds, and `CFA635_CLOCK_TIME_FMT` /
+`CFA635_CLOCK_DATE_FMT` are `strftime` formats (default `%H:%M` and
+`%a %d %b{fill}%Y`, where `{fill}` right-aligns the year).
+
 ## Optional tuning
 
 The FTDI latency timer defaults to 16 ms, which is the floor on keypress

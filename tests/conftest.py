@@ -44,7 +44,8 @@ class LiveServer:
 def live_server(tmp_path):
     """A cfa635d on 127.0.0.1:<ephemeral>, backed by FakeSerial."""
     fake = FakeSerial()
-    config = Config(port="/dev/fake", http_host="127.0.0.1", http_port=0)
+    config = Config(port="/dev/fake", http_host="127.0.0.1", http_port=0,
+                    clock=False, info=False)
     app = create_app(config, ser=fake)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
 

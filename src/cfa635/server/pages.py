@@ -7,7 +7,9 @@ which one is on the glass:
      it times out, the page disappears, or an alert arrives.
   2. Alert pages (priority >= ALERT_PRIORITY) preempt pins and rotation.
   3. Otherwise the highest-priority pages rotate in created_at order.
-  4. An empty store selects the built-in idle page (id None).
+  4. An empty store selects the fallback idle screen (id None). Normally the
+     store is never empty: the server seeds its own clock and info pages
+     below client priority (see server/builtin.py).
 
 Pure logic over an injected clock — no device or asyncio dependencies.
 """
@@ -27,6 +29,7 @@ class Page:
     lines: list[str]
     owner: str = ""  # registered client id; only the owner may mutate
     interactive: bool = False  # ENTER may focus this page (keys route to owner)
+    builtin: bool = False  # server-owned (clock/info): content, but still idle
     priority: int = 50
     ttl: float | None = None
     duration: float | None = None  # rotation dwell override while current

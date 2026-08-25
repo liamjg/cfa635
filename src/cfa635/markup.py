@@ -6,6 +6,7 @@ Page lines may contain tokens that expand at render time:
     {vbar:0.6}       one-cell vertical fill, 8 levels
     {spark:...}      comma-separated samples -> a row of vbar cells
     {chart:...:rows=2}  multi-row fill chart (row-span; widget owns cells)
+    {big:09:47}      3-row seven-segment digits (row-span; 3 cells per digit)
     {spin}           one-cell spinner (bitmap-animated by the tick loop)
     {hr}             solid rule filling the remaining width (one glyph)
     {fill} {fill:.}  expands to consume leftover space (justify / leaders)
@@ -93,6 +94,89 @@ ICONS: dict[str, tuple[tuple[int, ...], str]] = {
 _RAMP = " ..::-=##"  # vertical-fill fallback by filled rows (0..8)
 
 
+# --- big font ----------------------------------------------------------------
+#
+# Seven-segment characters 3 rows tall and 3 cells wide (18 x 24 px, since
+# cells are contiguous in both directions). The whole alphabet closes at
+# exactly MAX_GLYPHS bitmaps, which is the reason for the 3-row geometry: a
+# 2-row font needs 9-11 (the corner joins multiply) and cannot fit.
+#
+# The trick is that the middle bar sits at the *top* of the middle row, so a
+# vertical stroke that stops at the bar contributes nothing of its own — the
+# bar already fills those pixel rows. Four bars/verticals plus their four
+# corners is the entire set.
+
+STROKE = 2  # px; the strokes' thickness in a 6 x 8 cell
+
+
+def _vert(left: bool) -> tuple[int, ...]:
+    return _colfill(STROKE) if left else tuple([(1 << STROKE) - 1] * 8)
+
+
+def _band(top: bool) -> tuple[int, ...]:
+    if top:
+        return tuple([0x3F] * STROKE + [0] * (8 - STROKE))
+    return _rowfill(STROKE)
+
+
+def _merge(a: tuple[int, ...], b: tuple[int, ...]) -> tuple[int, ...]:
+    return tuple(x | y for x, y in zip(a, b))
+
+
+_VL, _VR = _vert(True), _vert(False)
+_HT, _HB = _band(True), _band(False)
+
+# key -> bitmap. The keys draw the font legibly in source (see BIG_FONT).
+BIG_CELLS: dict[str, tuple[int, ...] | None] = {
+    " ": None,                  # blank
+    "|": _VL,                   # left vertical
+    "!": _VR,                   # right vertical
+    "-": _HT,                   # top bar, or the middle bar one row down
+    "_": _HB,                   # bottom bar
+    "[": _merge(_VL, _HT),      # left vertical + bar above it
+    "]": _merge(_VR, _HT),      # right vertical + bar above it
+    "L": _merge(_VL, _HB),      # left vertical + bar below it
+    "J": _merge(_VR, _HB),      # right vertical + bar below it
+}
+
+# Each entry is three rows of three cells. "1" keeps the stem right-aligned,
+# the way a real seven-segment display shows it.
+BIG_FONT: dict[str, tuple[str, str, str]] = {
+    "0": ("[-]",
+          "| !",
+          "L_J"),
+    "1": ("  !",
+          "  !",
+          "  !"),
+    "2": ("--]",
+          "[--",
+          "L__"),
+    "3": ("--]",
+          "--]",
+          "__J"),
+    "4": ("| !",
+          "--]",
+          "  !"),
+    "5": ("[--",
+          "--]",
+          "__J"),
+    "6": ("[--",
+          "[-]",
+          "L_J"),
+    "7": ("--]",
+          "  !",
+          "  !"),
+    "8": ("[-]",
+          "[-]",
+          "L_J"),
+    "9": ("[-]",
+          "--]",
+          "__J"),
+}
+
+BIG_ROWS = 3
+
+
 def _vcell(rows: int) -> Cell:
     rows = max(0, min(8, rows))
     if rows == 0:
@@ -119,7 +203,9 @@ class _Fill:
 
 
 def parse_line(text: str, now: float) -> tuple[list[Cell], list[tuple]]:
-    """-> (cells, spans). spans: (start_col, n_rows, values) for {chart:}."""
+    """-> (cells, spans). A span is (start_col, rows_below): pre-rendered
+    cells for the rows a row-spanning widget ({chart:}, {big:}) also owns.
+    A span covers only its own columns — text beside it survives."""
     if text.startswith("{scroll}"):
         return _scroll_line(text[len("{scroll}"):], now), []
 
@@ -145,7 +231,11 @@ def parse_line(text: str, now: float) -> tuple[list[Cell], list[tuple]]:
             cells.append(_ch(text[i]))  # unknown token: render literally
             i += 1
 
-    _expand_fills(cells, fills)
+    inserted = _expand_fills(cells, fills)
+    if inserted and spans:
+        # fills shift everything after them right, row-spanning widgets included
+        spans = [(col + sum(n for at, n in inserted if at <= col), below)
+                 for col, below in spans]
     cells = cells[:COLUMNS]
     cells += [BLANK] * (COLUMNS - len(cells))
     return cells, spans
@@ -224,21 +314,74 @@ def _token(name: str, arg: str, now: float, cells: list[Cell],
         if values is None or not 1 <= rows <= ROWS:
             return False
         values = values[:COLUMNS]
-        spans.append((len(cells), rows, values))
         # the span's own-line cells are its top row; lower rows are filled
         # into the following lines by parse_frame
-        for v in values:
-            level = round(max(0.0, min(1.0, v)) * 8 * rows)
-            cells.append(_vcell(level - 8 * (rows - 1)))
+        spans.append((len(cells),
+                      [_chart_row(values, rows, r) for r in range(1, rows)]))
+        cells.extend(_chart_row(values, rows, 0))
         return True
+    if name == "big":
+        return _big(arg, cells, spans)
     return False
 
 
-def _expand_fills(cells: list[Cell], fills: list[_Fill]) -> None:
+def _chart_row(values: list[float], n_rows: int, row: int) -> list[Cell]:
+    """One row of a {chart:} span; row 0 is the top (the widget's own line)."""
+    return [_vcell(round(max(0.0, min(1.0, v)) * 8 * n_rows)
+                   - 8 * (n_rows - 1 - row))
+            for v in values]
+
+
+def _big(arg: str, cells: list[Cell], spans: list[tuple]) -> bool:
+    """3-row seven-segment characters, 3 cells per digit.
+
+    Unsupported characters (and ':') take a single column, which also keeps
+    neighbouring digits' verticals from touching. The colon's own CGROM glyph
+    lands on the middle row, dead centre of the 24 px character height, and
+    costs no slot.
+    """
+    if not arg:
+        return False
+    rows: list[list[Cell]] = [[] for _ in range(BIG_ROWS)]
+    for ch in arg:
+        art = BIG_FONT.get(ch)
+        if art is None:
+            for row, cell in zip(rows, (BLANK, _ch(ch) if ch != " " else BLANK,
+                                        BLANK)):
+                row.append(cell)
+            continue
+        if rows[0] and rows[0][-1] != BLANK:
+            for row in rows:  # 2 px + 2 px of adjacent verticals would merge
+                row.append(BLANK)
+        # one cell of the top row carries the literal character as its
+        # fallback, so an over-budget frame degrades to small text rather than
+        # to noise. It has to be a cell that actually has a glyph: "1" and "4"
+        # have nothing in the middle of their top row.
+        literal = min((c for c, key in enumerate(art[0]) if key != " "),
+                      key=lambda c: abs(c - 1), default=None)
+        for r, spec in enumerate(art):
+            for col, key in enumerate(spec):
+                bitmap = BIG_CELLS[key]
+                if bitmap is None:
+                    rows[r].append(BLANK)
+                else:
+                    rows[r].append(Cell(
+                        glyph=bitmap,
+                        fallback=charmap.encode_char(ch)
+                        if r == 0 and col == literal else 0x20))
+    spans.append((len(cells), rows[1:]))
+    cells.extend(rows[0])
+    return True
+
+
+def _expand_fills(cells: list[Cell], fills: list[_Fill]) -> list[tuple[int, int]]:
+    """-> the (index, count) insertions made, so spans can be shifted."""
     spare = COLUMNS - len(cells)
     if spare <= 0 or not fills:
-        return
+        return []
     share = spare // len(fills)
+    inserted = []
+    # last fill first: inserting at a later index leaves earlier ones valid
     for index, fill in enumerate(reversed(fills)):
         count = share if index < len(fills) - 1 else spare - share * (len(fills) - 1)
         if fill.rule:
@@ -248,6 +391,8 @@ def _expand_fills(cells: list[Cell], fills: list[_Fill]) -> None:
         else:
             made = [BLANK] * count
         cells[fill.at:fill.at] = made
+        inserted.append((fill.at, count))
+    return inserted
 
 
 def _scroll_line(text: str, now: float) -> list[Cell]:
@@ -261,25 +406,24 @@ def _scroll_line(text: str, now: float) -> list[Cell]:
 
 
 def parse_frame(lines: list[str], now: float) -> list[list[Cell]]:
-    """4 rows x 20 Cells; {chart:rows=N} spans overwrite the rows below."""
+    """4 rows x 20 Cells; row-spanning widgets overwrite the cells below."""
     padded = (list(lines) + [""] * ROWS)[:ROWS]
     rows: list[list[Cell]] = []
-    pending: list[tuple[int, int, int, list[float]]] = []  # row, col, n, values
+    pending: list[tuple[int, int, list[list[Cell]]]] = []  # row, col, below
     for r, line in enumerate(padded):
         cells, spans = parse_line(line, now)
         rows.append(cells)
-        for col, n_rows, values in spans:
-            pending.append((r, col, n_rows, values))
-    for r, col, n_rows, values in pending:
-        for extra in range(1, n_rows):
+        for col, below in spans:
+            pending.append((r, col, below))
+    for r, col, below in pending:
+        for extra, span_cells in enumerate(below, start=1):
             target = r + extra
             if target >= ROWS:
                 break
-            for k, v in enumerate(values):
+            for k, cell in enumerate(span_cells):
                 if col + k >= COLUMNS:
                     break
-                level = round(max(0.0, min(1.0, v)) * 8 * n_rows)
-                rows[target][col + k] = _vcell(level - 8 * (n_rows - 1 - extra))
+                rows[target][col + k] = cell
     return rows
 
 

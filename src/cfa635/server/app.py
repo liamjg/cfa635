@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from cfa635.driver import ROWS
 from cfa635.sim import KEY_CODES, FakeSerial
+from cfa635.server import builtin
 from cfa635.server.clients import Client, ClientRegistry
 from cfa635.server.config import Config
 from cfa635.server.device import DeviceWorker
@@ -93,6 +94,7 @@ class ServerState:
         self._applied_contrast: int | None = None
         self._applied_cursor: tuple[int, int, str] | None = None
         self.last_activity = time.monotonic()
+        self.started_at = self.last_activity
         self._refresh_lock = asyncio.Lock()
         self._tick_task: asyncio.Task | None = None
         self._ip_cache: tuple[float, str] = (0.0, "")
@@ -112,6 +114,9 @@ class ServerState:
             backlight, contrast = stored
             self.backlight = (backlight, backlight)
             self.contrast = contrast
+        for page in builtin.pages(self.config):
+            self.store.put(page)
+        builtin.refresh(self)
         self.renderer.start()
         self._tick_task = asyncio.create_task(self._tick_loop(), name="arbiter-tick")
         await self.refresh("idle")
@@ -314,6 +319,7 @@ class ServerState:
             for page in self.store.sweep(now):
                 self.bus.publish({"type": "page_removed", "page": page.id,
                                   "reason": "expired"})
+            builtin.refresh(self)  # the clock ticks here
             self._check_focus(now)
             if self.shell.expired():
                 await self.close_shell()
@@ -355,7 +361,10 @@ class ServerState:
             else:
                 self.renderer.submit(page.lines if page else self._idle_lines())
                 await self._apply_leds(page.leds if page else None)
-            await self._apply_backlight(idle=page is None and not self.shell.is_open)
+            # Built-in pages are content, but they are not *activity*: the
+            # clock must not hold the backlight on forever.
+            idle = (page is None or page.builtin) and not self.shell.is_open
+            await self._apply_backlight(idle=idle)
             await self._apply_contrast()
             await self._apply_cursor(None if self.shell.is_open else page)
 
@@ -428,20 +437,10 @@ class ServerState:
         self._applied_cursor = target
 
     def _idle_lines(self) -> list[str]:
-        now = time.monotonic()
-        cached_at, ip = self._ip_cache
-        if now - cached_at > 60:
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                    s.settimeout(0.2)
-                    s.connect(("8.8.8.8", 53))
-                    ip = s.getsockname()[0]
-            except OSError:
-                ip = ""
-            self._ip_cache = (now, ip)
+        """Only reached with every built-in page disabled (see builtin.py)."""
         return [
             socket.gethostname()[:20],
-            ip,
+            builtin.host_ip(self),
             datetime.now().strftime("%b %d  %H:%M:%S"),
             "cfa635d - no pages",
         ]

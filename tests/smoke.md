@@ -29,6 +29,18 @@ curl -s -X PUT :8635/pages/hello -H "$A" -H 'content-type: application/json' \
 #    [HW] if glyphs render mirrored/garbled the CGRAM row bit-order
 #         assumption is wrong: fix markup.py's bitmaps + sim.py together
 
+# 5b. the resting screen: delete every page and look at the clock
+#    [HW] digits must not be mirrored — "2" opens to the left, not the right.
+#         If they are, the CGRAM row bit-order assumption is wrong (MSB =
+#         leftmost): fix markup.py's bitmaps and sim.py together.
+#    [HW] the vertical strokes must run unbroken through all three rows and
+#         the bars unbroken across all three cells — this is the gapless-cell
+#         claim (datasheet p.13) doing the real work.
+#    [HW] 2 px strokes legible from across the room on FSTN positive glass?
+#         markup.STROKE is a single constant if they want to be 3 px.
+#    [HW] the colon sits centred between the digits, not high or low.
+#    press DOWN to reach Info: address readable, uptime sane.
+
 # 6. a second page starts 10 s rotation; watch page_visible events
 curl -s -X PUT :8635/pages/second -H "$A" -H 'content-type: application/json' \
      -d '{"lines":["page two","{spin} spinning"],"ttl":120,"duration":5}'

@@ -51,6 +51,25 @@ POST   /display/release        -> clear the pin
 
 Page ids: `[a-z0-9-]{1,32}`, global namespace, first-writer owns.
 
+**Built-in pages.** The server publishes two of its own, owned by the
+reserved id `system`, so `clock` and `info` are taken: writing to either
+returns 403 like any other client's page.
+
+| id | priority | what |
+|---|---|---|
+| `clock` | 10 | the resting screen: `{big:HH:MM}`, ticking seconds, date footer |
+| `info` | 5 | hostname + version, `IP:port`, uptime + client count, display firmware |
+
+Both sit below the client default (50), so anything you publish takes the
+glass and they return when it goes. `info` sits below `clock` so it never
+rotates in on its own — reach it from the shell switcher or the nav keys.
+They appear in `GET /pages` and rotate/pin like any other page, but they do
+not count as activity: the idle backlight timer still runs while one is up.
+Disable either with `CFA635_CLOCK=0` / `CFA635_INFO=0`; the clock's
+`strftime` formats are `CFA635_CLOCK_TIME_FMT` and `CFA635_CLOCK_DATE_FMT`
+(the date format may contain `{fill}`, e.g. `%a %d %b{fill}%Y`), and
+`CFA635_CLOCK_SECONDS=0` drops the seconds.
+
 `PUT` body:
 
 ```json
@@ -92,6 +111,7 @@ display's cells are contiguous in both axes, so meters are gapless.
 | `{vbar:0.6}` | one-cell vertical fill, 8 levels | ≤7 (shared family) |
 | `{spark:0.2,0.7,…}` | one vbar cell per sample | ≤7 (shared family) |
 | `{chart:…:rows=2}` | multi-row fill chart, 8·N levels — the widget owns the cells it covers on the rows below | ≤7 (shared family) |
+| `{big:09:47}` | seven-segment characters 3 rows tall, 3 cells per digit — the widget owns the cells it covers on the two rows below | 8 (the whole font) |
 | `{spin}` | one-cell spinner, bitmap-animated ~4 Hz | 1 |
 | `{hr}` | solid rule filling the remaining width | 1 |
 | `{fill}` `{fill:.}` | expands to consume leftover space: `CPU{fill}42%` right-justifies, `{fill}T{fill}` centers, `{fill:.}` dot leaders | 0 |
@@ -116,9 +136,24 @@ display's cells are contiguous in both axes, so meters are gapless.
 hardware inverse-video blinking block: the zero-slot highlight for PIN
 entry and field editing.
 
+**Big characters**: `{big:...}` draws digits 18 x 24 px, as three rows of
+three cells. One blank column separates adjacent digits (their 2 px
+verticals would otherwise merge); `:` and any character with no big form
+take a single column and render normally on the *middle* row, i.e.
+vertically centred against the digits — which is what makes the colon in
+`{big:09:47}` land dead centre for free, and what lets `{big:9 AM}` work.
+`{big:HH:MM}` is 15 columns wide.
+
+The font is 3 rows tall rather than 2 because that is what fits: the ten
+digits then share exactly 8 bitmaps (four bars/verticals and their four
+corners), so no value can exhaust CGRAM mid-frame. A 2-row font needs 9-11.
+The flip side is that the budget is fully spent — nothing else on the frame
+gets a slot, and `{big:}` itself degrades to the plain string on its top
+row if something else claimed the slots first.
+
 *Planned (v1.1, not yet implemented)*: `{inv:text}` inverted spans (short
-designed spans only — one slot per distinct character), `{big:digits}`
-2-row numerals, sliders/scrollbars, battery/wifi levels, more icons.
+designed spans only — one slot per distinct character), sliders/scrollbars,
+battery/wifi levels, more icons.
 *Planned live tokens*: `{ago:epoch}`, `{countdown:epoch}`.
 
 ## Keypad input: browse and focus

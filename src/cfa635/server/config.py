@@ -13,8 +13,11 @@ def _find_port() -> str:
     return detected if detected else "/dev/cfa635"
 
 
-def _env_flag(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    if not value:
+        return default
+    return value in ("1", "true", "yes", "on")
 
 
 @dataclass(frozen=True)
@@ -39,3 +42,13 @@ class Config:
     idle_backlight: int = field(default_factory=lambda: int(os.environ.get("CFA635_IDLE_BACKLIGHT", "0")))
     idle_dim_secs: float = field(default_factory=lambda: float(os.environ.get("CFA635_IDLE_DIM_SECS", "300")))
     contrast: int = field(default_factory=lambda: int(os.environ.get("CFA635_CONTRAST", "120")))
+    # Built-in pages (server/builtin.py). The clock is the resting screen;
+    # info sits below it, reachable from the shell switcher and the nav keys.
+    clock: bool = field(default_factory=lambda: _env_flag("CFA635_CLOCK", True))
+    info: bool = field(default_factory=lambda: _env_flag("CFA635_INFO", True))
+    clock_seconds: bool = field(default_factory=lambda: _env_flag("CFA635_CLOCK_SECONDS", True))
+    # strftime, rendered through markup: {big:} takes the time 3 rows tall, and
+    # {fill} in the date line pushes whatever follows it to the right margin.
+    clock_time_fmt: str = field(default_factory=lambda: os.environ.get("CFA635_CLOCK_TIME_FMT", "%H:%M"))
+    clock_date_fmt: str = field(default_factory=lambda: os.environ.get(
+        "CFA635_CLOCK_DATE_FMT", "%a %d %b{fill}%Y"))

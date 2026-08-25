@@ -77,16 +77,23 @@ bearer token), then publish **pages** (virtual 4x20 screens) that only they
 can modify; the server decides what's on the glass: highest priority wins,
 equals rotate (10 s default, per-page `duration` override), `priority >=
 100` is an alert that preempts everything, and pages with a `ttl` vanish
-when their owner stops refreshing them. With no pages it shows an idle
-screen (hostname/IP/clock) and turns the backlight off after 5 min.
+when their owner stops refreshing them.
+
+At rest the display shows its own **big-font clock** — seven-segment digits
+three rows tall, with the date across the footer — and a second built-in
+**Info** page (address, uptime, firmware) sits behind it in the switcher.
+Both are ordinary pages below client priority, so anything you publish
+takes the glass and the clock returns when it goes; both are still "idle"
+for the backlight, which turns off after 5 min without a keypress.
 
 On the device itself: UP/DOWN rotate and pin pages, **EXIT opens the
 built-in shell** (page switcher + backlight/contrast settings, persisted in
 the module's user flash), and **ENTER focuses** an `interactive` page — all
 six keys then route to that page's owner over WebSocket, which is how
 clients build menus, dimmers, and dialogs. Page lines support server-side
-**markup**: gapless bars, sparklines, multi-row charts, spinners, icons,
-`{fill}` layout, marquee and blink — see [docs/API.md](docs/API.md).
+**markup**: gapless bars, sparklines, multi-row charts, big seven-segment
+digits, spinners, icons, `{fill}` layout, marquee and blink — see
+[docs/API.md](docs/API.md).
 
 ```bash
 # register once, keep the token

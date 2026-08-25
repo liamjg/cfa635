@@ -12,8 +12,13 @@ from tests.fakeserial import FakeSerial
 
 
 def make_client(**config_kw) -> tuple[TestClient, FakeSerial]:
+    """A server with the built-in clock/info pages off, so a test's own pages
+    are the only things in the store. Pass clock=True/info=True to exercise
+    them (see tests/test_builtin.py)."""
     fake = FakeSerial()
-    config = Config(port="/dev/fake", backlight=80, idle_dim_secs=300, **config_kw)
+    defaults = dict(port="/dev/fake", backlight=80, idle_dim_secs=300,
+                    clock=False, info=False)
+    config = Config(**{**defaults, **config_kw})
     app = create_app(config, ser=fake)
     return TestClient(app), fake
 
