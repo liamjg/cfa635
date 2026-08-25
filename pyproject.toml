@@ -10,9 +10,13 @@ dependencies = [
     "websockets>=13",  # uvicorn's WS protocol impl; without it /ws 404s
 ]
 
+[project.optional-dependencies]
+mcp = ["mcp>=1.2"]
+
 [project.scripts]
 cfa635-probe = "cfa635.probe:main"
 cfa635-server = "cfa635.server.main:main"
+cfa635-goose-hook = "cfa635.goose.status:main"
 
 [dependency-groups]
 dev = [

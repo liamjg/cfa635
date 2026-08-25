@@ -97,6 +97,24 @@ def test_drain_is_nonblocking_when_empty():
     assert dev.drain_reports_nonblocking() == []
 
 
+def test_lost_response_is_retried_not_stalled():
+    """Datasheet handshake: retry after ~250 ms rather than waiting seconds."""
+    dev, fake = make_dev()
+    fake.swallow_responses = 1
+    start = time.monotonic()
+    assert dev.ping(b"again") == b"again"
+    assert time.monotonic() - start < 1.5  # one short timeout, not a long stall
+    # the command was sent twice: original + retry
+    assert [c for c, _ in fake.commands].count(0) == 2
+
+
+def test_exhausted_retries_raise():
+    dev, fake = make_dev()
+    fake.swallow_responses = 10
+    with pytest.raises(TimeoutError):
+        dev.send(0, b"x", timeout=0.05, retries=1)
+
+
 def test_report_order_preserved_across_paths():
     dev, fake = make_dev()
     fake.press_key(KEY_UP_PRESS)

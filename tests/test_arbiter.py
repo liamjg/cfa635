@@ -53,6 +53,21 @@ def test_rotation_in_created_order():
     assert arb.select() == "a"  # mid-interval: no change
 
 
+def test_per_page_duration_overrides_rotation_dwell():
+    clock = Clock()
+    store, arb = make(clock)
+    store.put(page("quick", clock, duration=2))
+    clock.tick(1)
+    store.put(page("slow", clock, duration=25))
+    assert arb.select() == "quick"
+    clock.tick(2)  # quick's own dwell elapsed
+    assert arb.select() == "slow"
+    clock.tick(10)  # global default would have rotated; slow holds on
+    assert arb.select() == "slow"
+    clock.tick(15)
+    assert arb.select() == "quick"
+
+
 def test_higher_priority_wins_rotation_group():
     clock = Clock()
     store, arb = make(clock)

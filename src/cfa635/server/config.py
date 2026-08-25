@@ -13,13 +13,23 @@ def _find_port() -> str:
     return detected if detected else "/dev/cfa635"
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
 @dataclass(frozen=True)
 class Config:
-    port: str = field(default_factory=lambda: os.environ.get("CFA635_PORT") or _find_port())
+    # Simulator mode: run against the in-process fake device (cfa635.sim)
+    # instead of real hardware, and serve the visual simulator at /sim.
+    sim: bool = field(default_factory=lambda: _env_flag("CFA635_SIM"))
+    port: str = field(default_factory=lambda: (
+        "sim" if _env_flag("CFA635_SIM")
+        else os.environ.get("CFA635_PORT") or _find_port()))
     http_host: str = field(default_factory=lambda: os.environ.get("CFA635_HTTP_HOST", "0.0.0.0"))
     http_port: int = field(default_factory=lambda: int(os.environ.get("CFA635_HTTP_PORT", "8635")))
     rotation_secs: float = field(default_factory=lambda: float(os.environ.get("CFA635_ROTATION_SECS", "10")))
     nav_hold_secs: float = field(default_factory=lambda: float(os.environ.get("CFA635_NAV_HOLD_SECS", "30")))
+    focus_hold_secs: float = field(default_factory=lambda: float(os.environ.get("CFA635_FOCUS_HOLD_SECS", "30")))
     nav_keys: tuple[str, ...] = field(default_factory=lambda: tuple(
         k.strip().lower() for k in os.environ.get("CFA635_NAV_KEYS", "up,down").split(",") if k.strip()
     ))

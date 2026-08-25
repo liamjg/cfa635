@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cfa635d panel</title>
+<style>
+  :root {
+    --page: #47535C; --ink: #F2F6F8; --muted: #B4C2C9; --accent: #5FE0A0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--page); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 18px; padding: 24px;
+  }
+  h1 { font-size: 15px; font-weight: 600; letter-spacing: .04em; margin: 0; }
+  h1 .mono, .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+  #device { width: min(96vw, 900px); height: auto; display: block; }
+  .statusline { color: var(--muted); font-size: 12.5px; display: flex; gap: 18px; }
+  .statusline b { color: var(--ink); font-weight: 600; }
+  #conn.ok { color: var(--accent); }
+  #conn.bad { color: #E06258; }
+  .legend { color: var(--muted); font-size: 12px; }
+  .legend kbd {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+    border: 1px solid #333B40; border-bottom-width: 2px; border-radius: 4px;
+    padding: 1px 5px; color: var(--ink); background: #1B2125;
+  }
+  svg .key { cursor: pointer; }
+  svg .key:active { filter: brightness(1.25); }
+</style>
+</head>
+<body>
+<h1><span class="mono">cfa635d</span> panel &mdash; XES635BK-TFE-KU</h1>
+<svg id="device" viewBox="0 0 146 39.3" role="img"
+     aria-label="Crystalfontz XES635 LCD panel"></svg>
+<div class="statusline">
+  <span id="conn">connecting&hellip;</span>
+  <span id="mode"></span>
+  <span>backlight <b id="bl">&ndash;</b>%</span>
+  <span>contrast <b id="ct">&ndash;</b></span>
+</div>
+<div class="legend">
+  keys: <kbd>&uarr;</kbd><kbd>&darr;</kbd><kbd>&larr;</kbd><kbd>&rarr;</kbd>
+  <kbd>Enter</kbd> = &#10003; &nbsp;<kbd>Esc</kbd> = &#10005; &nbsp;&mdash;&nbsp;
+  or click the keypad. Geometry per the &sect;9 mechanical drawings:
+  146.0&times;39.3&nbsp;mm case, 80.9&times;25.5&nbsp;mm viewing area,
+  0.60&times;0.65&nbsp;mm pixels on a 0.65&times;0.70&nbsp;mm pitch.
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var NS = "http://www.w3.org/2000/svg";
+
+  /* ---- geometry, XES635BK-xxx-KU data sheet 2019-07-02 ----
+     Dimensioned values from §3.1 / §9.1 / §9.2; undimensioned placements
+     (viewing-area offset, LED column, keypad centre) digitized from the
+     §9.1 outline drawing, which is internally to scale (~0.154 mm/px). */
+  var MODULE_W = 146.0, MODULE_H = 39.3;    // overall external case
+  var VIEW_W = 80.9,  VIEW_H = 25.5;        // viewing area
+  var ACTIVE_W = 77.95, ACTIVE_H = 22.35;   // active area
+  var CELL_W = 3.90, CELL_H = 5.60;         // 6x8 matrix pitch
+  var PX_PITCH_X = 0.65, PX_PITCH_Y = 0.70;
+  var PX_W = 0.60, PX_H = 0.65;             // 0.05 mm inter-pixel gap
+  var COLS = 20, ROWS = 4;
+
+  var VIEW_X = 18.08, VIEW_Y = (MODULE_H - VIEW_H) / 2;  // 6.90
+  var AX = VIEW_X + (VIEW_W - ACTIVE_W) / 2;             // 19.56
+  var AY = VIEW_Y + (VIEW_H - ACTIVE_H) / 2;             // 8.48
+
+  var LED_X = 5.54, LED_Y0 = 10.90, LED_DY = 5.60, LED_R = 1.54; // 3.08 mm dia
+
+  // keypad: arrow cross centred at (126.06, 19.65); caps at +/-11.48 mm,
+  // printed glyphs at +/-12.32 mm; octagon X key offset (-11.8, +11.8)
+  var KPX = 126.06, KPY = MODULE_H / 2;
+  var ARROW_OFF = 11.48, GLYPH_OFF = 12.32, X_OFF = 11.8;
+
+  var INK = "#1B242B";
+  var CAP = "#EDEFEA", HOLE = "#07090B", GLYPH_INK = "#3A4348";
+  var CHECK_GREEN = "#00B82E", X_RED = "#ED1C24";  // as printed in the drawing
+
+  function el(name, attrs, parent) {
+    var e = document.createElementNS(NS, name);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+
+  /* ---- 5x7 CGROM approximation (ASCII + a few specials); CGRAM codes 0-7
+         are drawn from the actually-programmed bitmaps in /sim/state ---- */
+  var F = {
+    " ": [0,0,0,0,0,0,0],
+    "!": [4,4,4,4,0,0,4], '"': [10,10,10,0,0,0,0], "#": [10,10,31,10,31,10,10],
+    "$": [4,15,20,14,5,30,4], "%": [24,25,2,4,8,19,3], "&": [12,18,20,8,21,18,13],
+    "'": [12,4,8,0,0,0,0], "(": [2,4,8,8,8,4,2], ")": [8,4,2,2,2,4,8],
+    "*": [0,4,21,14,21,4,0], "+": [0,4,4,31,4,4,0], ",": [0,0,0,0,12,4,8],
+    "-": [0,0,0,31,0,0,0], ".": [0,0,0,0,0,12,12], "/": [0,1,2,4,8,16,0],
+    "0": [14,17,19,21,25,17,14], "1": [4,12,4,4,4,4,14], "2": [14,17,1,2,4,8,31],
+    "3": [31,2,4,2,1,17,14], "4": [2,6,10,18,31,2,2], "5": [31,16,30,1,1,17,14],
+    "6": [6,8,16,30,17,17,14], "7": [31,1,2,4,8,8,8], "8": [14,17,17,14,17,17,14],
+    "9": [14,17,17,15,1,2,12],
+    ":": [0,12,12,0,12,12,0], ";": [0,12,12,0,12,4,8], "<": [2,4,8,16,8,4,2],
+    "=": [0,0,31,0,31,0,0], ">": [8,4,2,1,2,4,8], "?": [14,17,1,2,4,0,4],
+    "@": [14,17,1,13,21,21,14],
+    "A": [14,17,17,31,17,17,17], "B": [30,17,17,30,17,17,30], "C": [14,17,16,16,16,17,14],
+    "D": [28,18,17,17,17,18,28], "E": [31,16,16,30,16,16,31], "F": [31,16,16,30,16,16,16],
+    "G": [14,17,16,23,17,17,15], "H": [17,17,17,31,17,17,17], "I": [14,4,4,4,4,4,14],
+    "J": [7,2,2,2,2,18,12], "K": [17,18,20,24,20,18,17], "L": [16,16,16,16,16,16,31],
+    "M": [17,27,21,21,17,17,17], "N": [17,17,25,21,19,17,17], "O": [14,17,17,17,17,17,14],
+    "P": [30,17,17,30,16,16,16], "Q": [14,17,17,17,21,18,13], "R": [30,17,17,30,20,18,17],
+    "S": [15,16,16,14,1,1,30], "T": [31,4,4,4,4,4,4], "U": [17,17,17,17,17,17,14],
+    "V": [17,17,17,17,17,10,4], "W": [17,17,17,21,21,21,10], "X": [17,17,10,4,10,17,17],
+    "Y": [17,17,17,10,4,4,4], "Z": [31,1,2,4,8,16,31],
+    "[": [14,8,8,8,8,8,14], "\\": [0,16,8,4,2,1,0], "]": [14,2,2,2,2,2,14],
+    "^": [4,10,17,0,0,0,0], "_": [0,0,0,0,0,0,31], "`": [8,4,2,0,0,0,0],
+    "a": [0,0,14,1,15,17,15], "b": [16,16,22,25,17,17,30], "c": [0,0,14,16,16,17,14],
+    "d": [1,1,13,19,17,17,15], "e": [0,0,14,17,31,16,14], "f": [6,9,8,28,8,8,8],
+    "g": [0,15,17,17,15,1,14], "h": [16,16,22,25,17,17,17], "i": [4,0,12,4,4,4,14],
+    "j": [2,0,6,2,2,18,12], "k": [16,16,18,20,24,20,18], "l": [12,4,4,4,4,4,14],
+    "m": [0,0,26,21,21,17,17], "n": [0,0,22,25,17,17,17], "o": [0,0,14,17,17,17,14],
+    "p": [0,0,30,17,30,16,16], "q": [0,0,13,19,15,1,1], "r": [0,0,22,25,16,16,16],
+    "s": [0,0,14,16,14,1,30], "t": [8,8,28,8,8,9,6], "u": [0,0,17,17,17,19,13],
+    "v": [0,0,17,17,17,10,4], "w": [0,0,17,17,21,21,10], "x": [0,0,17,10,4,10,17],
+    "y": [0,0,17,17,15,1,14], "z": [0,0,31,2,4,8,31],
+    "{": [2,4,4,8,4,4,2], "|": [4,4,4,4,4,4,4], "}": [8,4,4,2,4,4,8],
+    "~": [0,0,8,21,2,0,0]
+  };
+  var SPECIAL = { 0x80: [12,18,18,12,0,0,0] };  // degree; 0x81-0x83 superscripts
+  var UNKNOWN = [21,10,21,10,21,10,21];         // checker: unmapped CGROM code
+
+  function romBits(code) {
+    if (SPECIAL[code]) return SPECIAL[code];
+    if (code >= 0x20 && code <= 0x7E) {
+      var bits = F[String.fromCharCode(code)];
+      if (bits) return bits;
+    }
+    return UNKNOWN;
+  }
+
+  /* ---- build the face ---- */
+  var svg = document.getElementById("device");
+  var defs = el("defs", {}, svg);
+  var grad = el("linearGradient", { id: "steel", x1: 0, y1: 0, x2: 0, y2: 1 }, defs);
+  el("stop", { offset: "0", "stop-color": "#2E3639" }, grad);
+  el("stop", { offset: "0.18", "stop-color": "#181D1F" }, grad);
+  el("stop", { offset: "1", "stop-color": "#0E1113" }, grad);
+
+  el("rect", { x: 0, y: 0, width: MODULE_W, height: MODULE_H, rx: 2.2,
+               fill: "url(#steel)" }, svg);
+  // window gasket recess + viewing area (fill driven by backlight level)
+  el("rect", { x: VIEW_X - 0.8, y: VIEW_Y - 0.8, width: VIEW_W + 1.6,
+               height: VIEW_H + 1.6, rx: 0.6, fill: "#05070A" }, svg);
+  var glass = el("rect", { x: VIEW_X, y: VIEW_Y, width: VIEW_W, height: VIEW_H,
+                           rx: 0.3, fill: "#E9EFEC" }, svg);
+
+  // pixel grid: one rect per pixel, exact size on the exact pitch
+  var pxg = el("g", { fill: INK }, svg);
+  var pixels = [];  // [row][col][py][px] -> rect
+  for (var r = 0; r < ROWS; r++) {
+    pixels.push([]);
+    for (var c = 0; c < COLS; c++) {
+      var cell = [];
+      for (var py = 0; py < 8; py++) {
+        var line = [];
+        for (var px = 0; px < 6; px++) {
+          line.push(el("rect", {
+            x: (AX + c * CELL_W + px * PX_PITCH_X).toFixed(3),
+            y: (AY + r * CELL_H + py * PX_PITCH_Y).toFixed(3),
+            width: PX_W, height: PX_H, opacity: 0.045
+          }, pxg));
+        }
+        cell.push(line);
+      }
+      pixels[r].push(cell);
+    }
+  }
+
+  // LEDs: bicolor, in a column left of the window, on the character-row pitch
+  var leds = [];
+  for (var i = 0; i < 4; i++) {
+    var cy = LED_Y0 + i * LED_DY;
+    el("circle", { cx: LED_X, cy: cy, r: LED_R, fill: "#000" }, svg);
+    leds.push(el("circle", { cx: LED_X, cy: cy, r: 1.2, fill: "#232A2D" }, svg));
+  }
+
+  /* ---- keypad ----
+     All shapes below are digitized outlines from the §9.1 front-view
+     drawing (mm, relative to each key's centre, +y down, up-pointing
+     canonical forms; the four arrows are rotations of one shape). */
+  function shapeAttrs(fill) {
+    return { fill: fill, stroke: fill, "stroke-width": 0.5,
+             "stroke-linejoin": "round" };
+  }
+  function pts(arr) {
+    return arr.map(function (p) { return p.join(","); }).join(" ");
+  }
+  // arrow cap: chevron with 45° shoulders, straight sides, and a deep
+  // V-notch whose back corners flare into two swallowtail points
+  var CAP_UP = pts([
+    [0, -5.08], [4.53, -0.61], [4.53, 4.63], [3.7, 5.08], [0.53, 2.15],
+    [-0.53, 2.15], [-3.7, 5.08], [-4.53, 4.63], [-4.53, -0.61]
+  ]);
+  // printed arrow glyph: notched dart, ~4.0 x 5.0 mm
+  var GLYPH_UP = pts([[0, -2.5], [2.0, 2.55], [0, 1.7], [-2.0, 2.55]]);
+  // regular octagon, 10.0 mm across flats
+  var OCT = (function () {
+    var a = 4.75, b = 4.75 * (Math.SQRT2 - 1);   // half-flat, half-side
+    return pts([[b, -a], [a, -b], [a, b], [b, a], [-b, a], [-a, b],
+                [-a, -b], [-b, -a]]);
+  })();
+  // check and X symbols, as printed (filled polygons, not strokes)
+  var CHECK = pts([
+    [-1.47, -0.46], [-0.6, 0.9], [2.08, -2.15], [3.46, -1.69],
+    [-0.7, 3.2], [-1.62, 2.3], [-3.16, 0.46]
+  ]);
+  var XSYM = pts([
+    [-2.55, -1.6], [-1.6, -2.55], [0, -1.3], [1.6, -2.55], [2.55, -1.6],
+    [1.3, 0], [2.55, 1.6], [1.6, 2.55], [0, 1.3], [-1.6, 2.55],
+    [-2.55, 1.6], [-1.3, 0]
+  ]);
+
+  function keyGroup(cx, cy, rot, keyName) {
+    return el("g", { "class": "key", "data-key": keyName,
+                     transform: "translate(" + cx + " " + cy + ")" +
+                                (rot ? " rotate(" + rot + ")" : "") }, svg);
+  }
+  function capWithHole(g, points) {
+    var hole = shapeAttrs(HOLE); hole.points = points;
+    hole.transform = "scale(1.13)";
+    el("polygon", hole, g);
+    var cap = shapeAttrs(CAP); cap.points = points;
+    el("polygon", cap, g);
+  }
+  function arrowKey(rot, keyName) {
+    var dx = Math.round(Math.sin(rot * Math.PI / 180));
+    var dy = -Math.round(Math.cos(rot * Math.PI / 180));
+    var g = keyGroup(KPX + ARROW_OFF * dx, KPY + ARROW_OFF * dy, rot, keyName);
+    capWithHole(g, CAP_UP);
+    // printed glyph sits 0.84 mm toward the tip of the cap centre
+    var gl = shapeAttrs(GLYPH_INK);
+    gl.points = GLYPH_UP;
+    gl["stroke-width"] = 0.4;
+    gl.transform = "translate(0 " + -(GLYPH_OFF - ARROW_OFF) + ")";
+    gl["pointer-events"] = "none";
+    el("polygon", gl, g);
+    return g;
+  }
+  arrowKey(0, "up"); arrowKey(180, "down");
+  arrowKey(-90, "left"); arrowKey(90, "right");
+
+  // check key: rotated square, 10.5 mm point-to-point (side 7.42, R1.13);
+  // the check symbol stays upright, so only the squares are rotated
+  var gEnter = keyGroup(KPX, KPY, 0, "enter");
+  el("rect", { x: -4.19, y: -4.19, width: 8.39, height: 8.39, rx: 1.13,
+               fill: HOLE, transform: "rotate(45)" }, gEnter);
+  el("rect", { x: -3.71, y: -3.71, width: 7.42, height: 7.42, rx: 1.13,
+               fill: CAP, transform: "rotate(45)" }, gEnter);
+  var ck = shapeAttrs(CHECK_GREEN);
+  ck.points = CHECK; ck["stroke-width"] = 0.4; ck["pointer-events"] = "none";
+  el("polygon", ck, gEnter);
+
+  // X key: octagon at (-11.8, +11.8) from the cross centre
+  var gExit = keyGroup(KPX - X_OFF, KPY + X_OFF, 0, "exit");
+  capWithHole(gExit, OCT);
+  var xs = shapeAttrs(X_RED);
+  xs.points = XSYM; xs["stroke-width"] = 0.4; xs["pointer-events"] = "none";
+  el("polygon", xs, gExit);
+
+  // cursor overlay (hardware cursor styles; blinks via SVG animate)
+  var cursor = el("rect", { x: 0, y: 0, width: CELL_W, height: CELL_H,
+                            fill: INK, opacity: 0, "pointer-events": "none" }, svg);
+  var cursorBlink = el("animate", { attributeName: "opacity", values: "0.85;0.85;0;0",
+                                    dur: "1s", repeatCount: "indefinite" }, cursor);
+
+  /* ---- rendering ---- */
+  function drawCell(r, c, bits6wide) {
+    // bits6wide: array of 8 values, 6 bits each, MSB = leftmost pixel
+    var cell = pixels[r][c];
+    for (var py = 0; py < 8; py++) {
+      var rowbits = bits6wide[py] || 0;
+      for (var px = 0; px < 6; px++) {
+        cell[py][px].setAttribute(
+          "opacity", (rowbits & (32 >> px)) ? 1 : 0.045);
+      }
+    }
+  }
+  function romToSix(bits5) {
+    // ROM glyphs are 5x7 in the left 5 columns / top 7 rows of the 6x8 cell.
+    var out = [];
+    for (var y = 0; y < 8; y++) out.push(y < 7 ? (bits5[y] || 0) << 1 : 0);
+    return out;
+  }
+
+  function apply(state) {
+    var t = Math.max(0, Math.min(100, state.backlight)) / 100;
+    var mix = function (a, b) { return Math.round(a + (b - a) * t); };
+    glass.setAttribute("fill", "rgb(" + mix(128, 233) + "," + mix(134, 239) +
+                       "," + mix(128, 234) + ")");
+    for (var r = 0; r < ROWS; r++)
+      for (var c = 0; c < COLS; c++) {
+        var code = state.rows[r][c];
+        drawCell(r, c, code < 8 ? state.cgram[code] : romToSix(romBits(code)));
+      }
+    for (var i = 0; i < 4; i++) {
+      var d = state.leds[String(i)];
+      var lit = d.green > 0 || d.red > 0;
+      leds[i].setAttribute("fill", lit
+        ? "rgb(" + Math.round(40 + 2.0 * d.red) + "," +
+                   Math.round(40 + 1.9 * d.green) + ",40)"
+        : "#232A2D");
+    }
+    var cs = state.cursor;
+    if (cs.style === 0) {
+      cursor.setAttribute("opacity", 0);
+      cursorBlink.setAttribute("values", "0;0");
+    } else {
+      var cx = AX + cs.col * CELL_W, cy = AY + cs.row * CELL_H;
+      var underscore = cs.style === 2;
+      cursor.setAttribute("x", cx);
+      cursor.setAttribute("y", underscore ? cy + CELL_H - 0.75 : cy);
+      cursor.setAttribute("height", underscore ? 0.75 : CELL_H);
+      cursorBlink.setAttribute("values",
+        cs.style === 2 ? "0.85;0.85" : "0.85;0.85;0;0");
+    }
+    document.getElementById("bl").textContent = state.backlight;
+    document.getElementById("ct").textContent = state.contrast;
+    document.getElementById("mode").textContent =
+      state.sim ? "simulated device" : "hardware mirror";
+  }
+
+  /* ---- polling ---- */
+  var conn = document.getElementById("conn");
+  function poll() {
+    fetch("/panel/state").then(function (r) { return r.json(); }).then(function (s) {
+      conn.textContent = "live";
+      conn.className = "ok";
+      apply(s);
+    }).catch(function () {
+      conn.textContent = "disconnected";
+      conn.className = "bad";
+    });
+  }
+  poll();
+  setInterval(poll, 200);
+
+  /* ---- input ---- */
+  function send(key, action) {
+    fetch("/panel/key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: key, action: action })
+    }).catch(function () {});
+  }
+  function keyOf(e) {
+    var t = e.target;
+    return (t && t.closest) ? t.closest("[data-key]") : null;
+  }
+  svg.addEventListener("pointerdown", function (e) {
+    var g = keyOf(e);
+    if (g) { e.preventDefault(); send(g.getAttribute("data-key"), "press"); }
+  });
+  svg.addEventListener("pointerup", function (e) {
+    var g = keyOf(e);
+    if (g) send(g.getAttribute("data-key"), "release");
+  });
+  var KEYMAP = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left",
+                 ArrowRight: "right", Enter: "enter", Escape: "exit" };
+  document.addEventListener("keydown", function (e) {
+    var k = KEYMAP[e.key];
+    if (k && !e.repeat) { e.preventDefault(); send(k, "press"); }
+  });
+  document.addEventListener("keyup", function (e) {
+    var k = KEYMAP[e.key];
+    if (k) send(k, "release");
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Identify a Crystalfontz CFA635-family module on the serial bus.
 
-Read-only: sends only Ping (0), Get Version (1), Read User Flash (3),
-Read Reporting & Status (30) and Read Keypad (24). Nothing is written to
-the display, to flash, or to the boot state.
+Read-only by default: sends only Ping (0), Get Version (1), Read User
+Flash (3), Read Reporting & Status (30) and Read Keypad (24). Nothing is
+written to the display, to flash, or to the boot state.
+
+The one deliberate exception is `--store-boot-state`, a one-time install
+step that writes a "cfa635d starting..." screen and saves it as the
+module's power-on state, so the glass shows something intentional between
+power-up and the daemon starting.
 
 Usage:
-    uv run cfa635-probe [--port /dev/ttyUSB0]
+    uv run cfa635-probe [--port /dev/ttyUSB0] [--store-boot-state]
 """
 
 from __future__ import annotations
@@ -34,7 +39,9 @@ def find_port() -> str | None:
 
 def usb_identity(port: str) -> dict[str, str]:
     """Walk sysfs up from the tty to the USB device node for VID/PID/serial."""
-    node = f"/sys/class/tty/{os.path.basename(port)}/device"
+    # resolve symlinks first: /dev/cfa635 -> ttyUSB0, and sysfs knows only
+    # the real tty name
+    node = f"/sys/class/tty/{os.path.basename(os.path.realpath(port))}/device"
     out: dict[str, str] = {}
     for _ in range(6):
         node = os.path.dirname(os.path.realpath(node))
@@ -92,15 +99,37 @@ def probe_at(port: str, baud: int) -> dict[str, object] | None:
         raise SystemExit(2)
 
 
+def store_boot_screen(port: str) -> int:
+    """Write the boot screen and persist it as the module's power-on state."""
+    with Cfa635(port) as dev:
+        dev.ping(b"BOOTSET")
+        dev.clear()
+        dev.write_text(0, 1, "cfa635d")
+        dev.write_text(0, 2, "starting...")
+        for led in range(4):
+            dev.set_led(led, 0, 0)
+        dev.set_cursor_style(0)
+        dev.store_boot_state()
+    print(f"Boot state stored on {port}: the module now powers up showing "
+          "'cfa635d starting...' until the daemon takes over.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", help="serial device (default: autodetect)")
+    ap.add_argument("--store-boot-state", action="store_true",
+                    help="write a 'cfa635d starting...' screen and save it "
+                         "as the module's power-on state (writes flash)")
     args = ap.parse_args()
 
     port = args.port or find_port()
     if not port:
         print("No candidate serial port found.", file=sys.stderr)
         return 1
+
+    if args.store_boot_state:
+        return store_boot_screen(port)
 
     print(f"Port: {port}")
     ident = usb_identity(port)

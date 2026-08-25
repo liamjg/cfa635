@@ -1,23 +1,39 @@
 # Installing cfa635d
 
+The service runs as a dedicated `cfa635` system user (no login, no
+password) from a root-owned copy of the repo in `/opt/cfa635`, so it
+starts at boot with nobody logged in. The working copy stays in
+`~/dev/cfa635`; the installer copies it to `/opt` and builds the venv
+there.
+
 ```sh
-cd /home/liam/dev/cfa635
-uv sync                                            # build the venv + entry points
-sudo cp deploy/99-crystalfontz.rules /etc/udev/rules.d/
-sudo udevadm control --reload && sudo udevadm trigger   # creates /dev/cfa635
-sudo cp deploy/cfa635d.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now cfa635d
+sudo sh deploy/install.sh      # from ~/dev/cfa635
 curl -s localhost:8635/health
 ```
 
+The script is idempotent — after pulling changes into `~/dev/cfa635`,
+re-run it to redeploy.
+
+What it does:
+
+1. Creates the `cfa635` system user (home `/var/lib/cfa635`). Serial
+   access is granted per-unit via `SupplementaryGroups=dialout`
+   (tty devices are `root:dialout 0660` by default), not by editing the
+   group database.
+2. Copies the repo to `/opt/cfa635` (excluding `.git`/`.venv`) and runs
+   `uv sync --frozen` there.
+3. Installs `99-crystalfontz.rules` → stable `/dev/cfa635` symlink and a
+   systemd device unit.
+4. Installs `cfa635d.service`, stops any manually-started server, then
+   enables + starts the service.
+
 The service stops when the display is unplugged and restarts when it
-reappears (BindsTo the udev-tagged device unit).
+reappears (`BindsTo` the udev-tagged device unit).
 
 ## Configuration
 
-Set `CFA635_*` environment variables in the unit (see
-`src/cfa635/server/config.py` for the full list and defaults):
+Set `CFA635_*` environment variables via `sudo systemctl edit cfa635d`
+(see `src/cfa635/server/config.py` for the full list and defaults):
 `CFA635_PORT`, `CFA635_HTTP_HOST`, `CFA635_HTTP_PORT` (8635),
 `CFA635_ROTATION_SECS`, `CFA635_NAV_HOLD_SECS`, `CFA635_NAV_KEYS`,
 `CFA635_BACKLIGHT`, `CFA635_IDLE_BACKLIGHT`, `CFA635_IDLE_DIM_SECS`,

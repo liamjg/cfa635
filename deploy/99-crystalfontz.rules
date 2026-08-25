@@ -1,4 +1,6 @@
-# Crystalfontz CFA635-USB (FTDI bridge 0403:fc0d): stable /dev/cfa635 symlink,
-# plugdev access, and a systemd device unit for BindsTo in cfa635d.service.
+# Crystalfontz CFA635-USB (FTDI bridge 0403:fc0d): stable /dev/cfa635 symlink
+# and a systemd device unit for BindsTo in cfa635d.service. Access needs no
+# grant here — tty devices default to root:dialout 0660, and the service gets
+# dialout via SupplementaryGroups in the unit.
 SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="fc0d", \
-  GROUP="plugdev", MODE="0660", SYMLINK+="cfa635", TAG+="systemd"
+  SYMLINK+="cfa635", TAG+="systemd"

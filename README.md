@@ -32,13 +32,15 @@ the places where the enclosure datasheet contradicts the hardware.
 ## Layout
 
 ```
-docs/                  datasheets (PDF) + docs/text/ plain-text extractions for grep
-notes/                 DEVICE.md (identification), PROTOCOL.md (API reference)
+docs/                  datasheets (PDF), docs/text/ extractions, API.md (the API reference)
+notes/                 DEVICE.md (identification), PROTOCOL.md, HA-INTEGRATION.md
 src/cfa635/            uv-managed package
-  driver.py            driver: framing, CRC, commands
+  driver.py            driver: framing, CRC, commands (incl. CGRAM, cursor, flash)
   charmap.py           Unicode/ASCII -> CGROM translation (from datasheet Fig. 11)
-  probe.py             read-only identification CLI (cfa635-probe)
-  server/              cfa635d: FastAPI page server (cfa635-server)
+  markup.py            server-side widgets: bars, sparklines, charts, icons, fills
+  sim.py               protocol-faithful fake device (tests + simulator)
+  probe.py             identification CLI (cfa635-probe); --store-boot-state
+  server/              cfa635d: FastAPI page server (cfa635-server) + /sim viewer
 deploy/                udev rule, systemd unit, install.md
 tests/                 hardware-free test suite (FakeSerial) + smoke.md
 ```
@@ -50,6 +52,8 @@ uv sync
 uv run cfa635-probe            # identify the device (read-only)
 uv run cfa635-server           # LAN API on :8635 (see below)
 uv run pytest                  # full suite, no hardware touched
+
+CFA635_SIM=1 uv run cfa635-server   # no hardware? full simulator at /sim
 ```
 
 Driver, used directly:
@@ -68,29 +72,59 @@ with Cfa635("/dev/ttyUSB0") as lcd:
 ## cfa635d — the LAN page server
 
 One long-running process owns the serial port and arbitrates the display
-between any number of network clients. Clients publish **pages** (virtual
-4x20 screens); the server decides what's on the glass: highest priority
-wins, equals rotate (10 s default), `priority >= 100` is an alert that
-preempts everything, keypad UP/DOWN pins a page for 30 s, and pages with a
-`ttl` vanish when their owner stops refreshing them. With no pages it shows
-an idle screen (hostname/IP/clock) and turns the backlight off after 5 min.
+between any number of network clients. Clients **register once** (id +
+bearer token), then publish **pages** (virtual 4x20 screens) that only they
+can modify; the server decides what's on the glass: highest priority wins,
+equals rotate (10 s default, per-page `duration` override), `priority >=
+100` is an alert that preempts everything, and pages with a `ttl` vanish
+when their owner stops refreshing them. With no pages it shows an idle
+screen (hostname/IP/clock) and turns the backlight off after 5 min.
+
+On the device itself: UP/DOWN rotate and pin pages, **EXIT opens the
+built-in shell** (page switcher + backlight/contrast settings, persisted in
+the module's user flash), and **ENTER focuses** an `interactive` page — all
+six keys then route to that page's owner over WebSocket, which is how
+clients build menus, dimmers, and dialogs. Page lines support server-side
+**markup**: gapless bars, sparklines, multi-row charts, spinners, icons,
+`{fill}` layout, marquee and blink — see [docs/API.md](docs/API.md).
 
 ```bash
-# put a page on the display (create-or-replace, idempotent)
-curl -X PUT :8635/pages/music -H 'content-type: application/json' \
-     -d '{"lines":["Now playing:","Blue in Green"], "ttl":30}'
+# register once, keep the token
+TOKEN=$(curl -s -X POST :8635/clients -H 'content-type: application/json' \
+        -d '{"name":"music"}' | jq -r .token)
 
-# an alert with the top LED red
-curl -X PUT :8635/pages/disk -H 'content-type: application/json' \
-     -d '{"lines":["disk almost full"],"priority":200,"leds":{"0":{"red":100}}}'
+# put a page on the display (create-or-replace, idempotent, owned)
+curl -X PUT :8635/pages/music -H "authorization: Bearer $TOKEN" \
+     -H 'content-type: application/json' \
+     -d '{"lines":["Now playing:","Blue in Green","{bar:0.4:20}"], "ttl":30}'
 
-# key presses + page visibility as a live stream
+# an alert with the top LED blinking red (server-side animation)
+curl -X PUT :8635/pages/disk -H "authorization: Bearer $TOKEN" \
+     -H 'content-type: application/json' \
+     -d '{"lines":["{bell} disk almost full"],"priority":200,
+          "leds":{"0":{"red":100,"mode":"blink"}}}'
+
+# key presses + page visibility as a live stream (reads are open)
 websocat ws://host:8635/ws
 ```
 
-Full surface: interactive docs at `http://host:8635/docs`; smoke-test
-walkthrough in [tests/smoke.md](tests/smoke.md); install as a service via
-[deploy/install.md](deploy/install.md).
+Full surface: [docs/API.md](docs/API.md) (the reference) and interactive
+docs at `http://host:8635/docs`; smoke-test walkthrough in
+[tests/smoke.md](tests/smoke.md); install as a service via
+[deploy/install.md](deploy/install.md) (optionally with
+`cfa635-probe --store-boot-state` for a power-on splash). In production it
+runs as the dedicated `cfa635` system user from `/opt/cfa635` under
+systemd, so it starts at boot with nobody logged in — the port-permission
+notes below only matter for running the tools ad hoc as `liam`.
+
+**The panel in a browser**: `http://host:8635/panel` is a live visual twin
+of the device face — the exact rows, glyphs, LEDs, and cursor on the glass
+right now, with a clickable keypad wired into the same input pipeline as
+the physical buttons. On the deployed daemon it mirrors the real hardware;
+with `CFA635_SIM=1` (no hardware attached) the same page fronts a
+protocol-faithful device model instead. Display *content* is byte-identical
+either way; only the character shapes are lookalikes — see the fidelity
+contract in [docs/API.md](docs/API.md).
 
 Two hardware quirks the server works around, discovered on this unit:
 firmware v1.6 rejects the two-byte (separate keypad) form of the backlight
@@ -150,6 +184,10 @@ sudo udevadm trigger --subsystem-match=tty
 PID `fc0d` is Crystalfontz's, but VID `0403` is FTDI's and is shared with a
 great many unrelated adapters — the rule is specific because of the PID, not
 the VID.
+
+The deployed rule ([deploy/99-crystalfontz.rules](deploy/99-crystalfontz.rules))
+adds only the symlink and systemd tag, with no group grant — this plugdev
+variant is only useful for ad-hoc access before your next re-login.
 
 ### If you do use sudo
 

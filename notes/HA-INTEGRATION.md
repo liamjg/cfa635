@@ -8,6 +8,48 @@ arbiter.
 
 Status: design only, nothing implemented yet.
 
+## Design delta for API v1 (2026-08: auth, focus, shell, markup)
+
+The server has since shipped API v1 (see `docs/API.md`); the sections below
+predate it. Amendments, in order of impact:
+
+1. **Registration & auth.** All mutations need a bearer token from
+   `POST /clients {"name": "ha"}`. Config flow registers once and stores
+   `client_id` + `token` in the entry; every REST write sends
+   `Authorization: Bearer …`, and the WS connects as
+   `ws://host:port/ws?token=…` (observer mode without it gets no routed
+   events). A 401 means the server restarted: re-register, re-PUT owned
+   pages, update the stored token.
+2. **Backlight & contrast entities are gone.** They are no longer API
+   surface — the person at the device sets them in the on-device shell and
+   they persist in module flash. Drop the `light` and contrast `number`
+   entities and the `allow_pwm` backlight option; `GET /device` still
+   reports the values for a diagnostic sensor.
+3. **Hello is a full snapshot** (pages, active, pinned, focus, LEDs,
+   device) and every event carries a monotonic `seq`. Resync-on-connect is
+   now free (parse the hello), and the 60 s polling fallback can be
+   replaced by: resync only when a `seq` gap is observed.
+4. **LED ownership.** LED 0 is the server's system indicator — expose LEDs
+   1–3 only. The integration's first write claims a LED for HA (other
+   clients then get 403s); `mode: blink|pulse` animates server-side, so
+   the select options can grow "blink" variants with no polling.
+5. **Focus mode is the new headline** alongside notify: publish pages with
+   `interactive: true`, and when a person presses ENTER on one, all six
+   keys arrive as routed events (`routed: true`, with a `generation` to
+   discard stale ones). This turns the panel into a real controller:
+   dimmer pages (◀▶ adjust a light), confirm dialogs, menus. Release focus
+   via `POST /pages/{id}/focus/release` when the user EXITs your top level.
+6. **Markup in lines.** The status-page `text` entities and notify messages
+   can use `{bar:}`, `{spark:}`, `{fill}`, icons, `{blink:}` etc. — see
+   docs/API.md. The notify LED flash should use `"mode": "blink"` instead
+   of a bare solid red.
+7. **`GET /device` now has `serial`** (`CF124841`) — use it as the config
+   entry `unique_id` (item 1 of "Server-side work" is done; zeroconf still
+   is not).
+8. **Key device triggers** work as designed and need no server changes;
+   note that EXIT presses open the on-device shell (`consumed: true`,
+   `layer: "shell"` while it is open) and ENTER may be consumed by focus.
+
 ## Shape and distribution
 
 - **Custom integration, distributed via HACS.** Domain `cfa635`, one config

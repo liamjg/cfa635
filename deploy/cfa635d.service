@@ -1,13 +1,14 @@
 [Unit]
 Description=CFA635 LCD page server
-After=network-online.target dev-cfa635.device
+After=dev-cfa635.device
 BindsTo=dev-cfa635.device
 
 [Service]
-User=liam
-Group=plugdev
+User=cfa635
+SupplementaryGroups=dialout
 Environment=CFA635_PORT=/dev/cfa635
-ExecStart=/home/liam/dev/cfa635/.venv/bin/cfa635-server
+WorkingDirectory=/opt/cfa635
+ExecStart=/opt/cfa635/.venv/bin/cfa635-server
 Restart=on-failure
 RestartSec=3
 

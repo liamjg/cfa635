@@ -25,9 +25,13 @@ class Page:
     id: str
     name: str
     lines: list[str]
+    owner: str = ""  # registered client id; only the owner may mutate
+    interactive: bool = False  # ENTER may focus this page (keys route to owner)
     priority: int = 50
     ttl: float | None = None
+    duration: float | None = None  # rotation dwell override while current
     leds: dict[int, tuple[int, int]] | None = None  # led index -> (green, red)
+    cursor: tuple[int, int, str] | None = None  # (row, col, style)
     created_at: float = 0.0
     updated_at: float = 0.0
 
@@ -55,6 +59,9 @@ class PageStore:
     def alive_pages(self, now: float) -> list[Page]:
         return [p for p in self._pages.values() if p.alive(now)]
 
+    def pages_for(self, owner: str) -> list[Page]:
+        return [p for p in self._pages.values() if p.owner == owner]
+
     def sweep(self, now: float) -> list[Page]:
         """Remove and return expired pages."""
         dead = [p for p in self._pages.values() if not p.alive(now)]
@@ -70,7 +77,7 @@ class Arbiter:
         self.rotation_secs = rotation_secs
         self.nav_hold_secs = nav_hold_secs
         self.clock = clock
-        self._pin: tuple[str, float] | None = None  # (page_id, expires)
+        self._pin: tuple[str, float, str] | None = None  # (page_id, expires, by)
         self._current: str | None = None
         self._rot_since: float = 0.0
 
@@ -78,12 +85,20 @@ class Arbiter:
     def pinned(self) -> str | None:
         return self._pin[0] if self._pin else None
 
-    def pin(self, page_id: str, hold: float | None = None) -> bool:
+    @property
+    def pinned_by(self) -> str | None:
+        """Who holds the pin: a client id, or "keypad" for physical nav."""
+        return self._pin[2] if self._pin else None
+
+    def pin(self, page_id: str, hold: float | None = None,
+            by: str = "keypad") -> bool:
         """Pin a page (keypad nav or /activate). False if it doesn't exist."""
         now = self.clock()
         if self.store.get(page_id) is None:
             return False
-        self._pin = (page_id, now + (hold if hold is not None else self.nav_hold_secs))
+        self._pin = (page_id,
+                     now + (hold if hold is not None else self.nav_hold_secs),
+                     by)
         return True
 
     def release(self) -> None:
@@ -118,7 +133,7 @@ class Arbiter:
             candidates = self._top_group(alerts)
         else:
             if self._pin is not None:
-                page_id, expires = self._pin
+                page_id, expires, _by = self._pin
                 if now < expires and self.store.get(page_id) is not None:
                     self._current = page_id
                     return page_id
@@ -129,9 +144,14 @@ class Arbiter:
         if self._current not in ids:
             self._current = ids[0]
             self._rot_since = now
-        elif now - self._rot_since >= self.rotation_secs:
-            self._current = ids[(ids.index(self._current) + 1) % len(ids)]
-            self._rot_since = now
+        else:
+            # The page on the glass sets its own dwell time, if it asked to.
+            current = self.store.get(self._current)
+            dwell = (current.duration if current and current.duration
+                     else self.rotation_secs)
+            if now - self._rot_since >= dwell:
+                self._current = ids[(ids.index(self._current) + 1) % len(ids)]
+                self._rot_since = now
         return self._current
 
     @staticmethod

@@ -190,28 +190,39 @@ class Cfa635:
             if pkt.packet_class == TYPE_REPORT:
                 self.reports.append(pkt)
 
-    def send(self, command: int, data: bytes = b"", timeout: float = 2.0) -> bytes:
+    def send(self, command: int, data: bytes = b"",
+             timeout: float = 0.35, retries: int = 2) -> bytes:
         """Send a command and return the response payload.
 
-        Unsolicited reports received while waiting are stashed in .reports
-        rather than being mistaken for the answer. Reports already buffered
-        before the command are drained (not discarded) first.
+        The datasheet guarantees a response within 250 ms and prescribes
+        retry-then-error ("About Handshaking"); the default timeout adds
+        headroom for OS serial latency, and a lost exchange is retried
+        rather than stalling. A CommandError (explicit rejection) is not
+        retried. Unsolicited reports received while waiting are stashed in
+        .reports rather than being mistaken for the answer.
         """
-        self._drain_buffered()
-        self.ser.write(Packet(TYPE_COMMAND | command, data).encode())
-        self.ser.flush()
+        for attempt in range(retries + 1):
+            self._drain_buffered()
+            self.ser.write(Packet(TYPE_COMMAND | command, data).encode())
+            self.ser.flush()
 
-        deadline = time.monotonic() + timeout
-        while True:
-            pkt = self._read_packet(deadline)
-            if pkt.packet_class == TYPE_REPORT:
-                self.reports.append(pkt)
-                continue
-            if pkt.packet_class == TYPE_ERROR and pkt.command == command:
-                raise CommandError(f"module rejected command {command}: {pkt}")
-            if pkt.packet_class == TYPE_RESPONSE and pkt.command == command:
-                return pkt.data
-            # Response to something else (stale traffic) -- keep waiting.
+            deadline = time.monotonic() + timeout
+            try:
+                while True:
+                    pkt = self._read_packet(deadline)
+                    if pkt.packet_class == TYPE_REPORT:
+                        self.reports.append(pkt)
+                        continue
+                    if pkt.packet_class == TYPE_ERROR and pkt.command == command:
+                        raise CommandError(
+                            f"module rejected command {command}: {pkt}")
+                    if pkt.packet_class == TYPE_RESPONSE and pkt.command == command:
+                        return pkt.data
+                    # Response to something else (stale) -- keep waiting.
+            except (TimeoutError, CrcError):
+                if attempt == retries:
+                    raise
+        raise AssertionError("unreachable")
 
     # --- commands (read-only subset; safe to run against a live unit) ------
 
@@ -226,6 +237,21 @@ class Cfa635:
     def read_user_flash(self) -> bytes:
         """Command 3. 16 bytes of host-usable non-volatile scratch space."""
         return self.send(3)
+
+    def store_boot_state(self) -> None:
+        """Command 4. Save the current display contents, special characters,
+        cursor, contrast, backlight, key masks and LED states as the
+        power-on state. One-time deploy nicety (e.g. a boot screen); flash
+        has limited write cycles, so never call this routinely."""
+        self.send(4)
+
+    def write_user_flash(self, data: bytes) -> None:
+        """Command 2. Write up to 16 bytes of non-volatile scratch space.
+        Flash has limited write cycles -- write on settled changes, not
+        per keystroke."""
+        if len(data) > 16:
+            raise ValueError("user flash is 16 bytes")
+        self.send(2, data)
 
     def read_status(self) -> bytes:
         """Command 30. 15-byte reporting & status blob. Bytes 0-4 are fan and
@@ -264,6 +290,30 @@ class Cfa635:
         if col + len(payload) > COLUMNS:
             raise ValueError(f"text runs {col + len(payload) - COLUMNS} chars past the right edge")
         self.send(31, bytes([col, row]) + payload)
+
+    def set_special_char(self, index: int, bitmap: bytes) -> None:
+        """Command 9. Program CGRAM special character `index` (0-7) with an
+        8-row bitmap; each row is a 6-bit value, MSB = leftmost pixel. The
+        glyph displays at data codes 0x00-0x07, and redefining it instantly
+        repaints every on-screen cell that references it."""
+        if not 0 <= index <= 7:
+            raise ValueError("special character index must be 0-7")
+        if len(bitmap) != 8 or any(b > 0x3F for b in bitmap):
+            raise ValueError("bitmap must be 8 rows of 6-bit values")
+        self.send(9, bytes([index]) + bytes(bitmap))
+
+    def set_cursor_position(self, col: int, row: int) -> None:
+        """Command 11. Move the hardware cursor (visible per cursor style)."""
+        if not 0 <= col < COLUMNS or not 0 <= row < ROWS:
+            raise ValueError(f"({col}, {row}) is off-screen")
+        self.send(11, bytes([col, row]))
+
+    def set_cursor_style(self, style: int) -> None:
+        """Command 12. 0=none 1=blinking block 2=underscore
+        3=block+underscore 4=inverting blinking block."""
+        if not 0 <= style <= 4:
+            raise ValueError("cursor style must be 0-4")
+        self.send(12, bytes([style]))
 
     def set_contrast(self, value: int) -> None:
         """Command 13. 0-255; the useful window is roughly 90-140 and the
